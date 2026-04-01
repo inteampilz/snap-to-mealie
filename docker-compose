@@ -1,0 +1,46 @@
+version: '3.8'
+
+networks:
+  proxy:
+    external: true
+
+services:
+  snap-to-mealie:
+    image: python:3.11-slim
+    container_name: snap-to-mealie
+    networks:
+      - proxy
+    
+    environment:
+      # --- LOGGING ---
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1 # Echtzeit-Logging im Docker-Log
+      
+      # --- MEALIE & GEMINI ---
+      - MEALIE_URL=http://YOUR_MEALIE_IP:9000
+      - MEALIE_API_KEY=your_mealie_api_token
+      - GEMINI_API_KEY=your_gemini_api_key
+      
+      # --- OIDC CONFIGURATION ---
+      - OIDC_CLIENT_ID=your_oidc_client_id
+      - OIDC_CLIENT_SECRET=your_oidc_client_secret
+      - OIDC_DISCOVERY_URL=https://auth.yourdomain.com/application/o/snap-mealie/.well-known/openid-configuration
+      - OIDC_REDIRECT_URI=https://snap.yourdomain.com/oauth2callback
+      - OIDC_COOKIE_SECRET=replace_this_with_a_long_random_string
+      
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1000
+
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
+    volumes:
+      - /path/to/your/host/folder:/app 
+    working_dir: /app
+    
+    command: sh -c "pip install --no-cache-dir streamlit google-genai requests pillow authlib && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
+    restart: unless-stopped

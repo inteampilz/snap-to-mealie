@@ -1,4 +1,4 @@
-import re, json, time, tempfile, shutil, os, io, base64
+import re, json, time, tempfile, shutil, os, io, base64, threading
 from typing import Any, Dict, List, Optional, Tuple
 import requests
 import streamlit as st
@@ -329,7 +329,7 @@ def generate_recipe_image_with_gemini(client, recipe_name: str, recipe_desc: str
     p = f"{bp} Style: {custom_style}" if custom_style.strip() else f"{bp} High quality, culinary magazine style."
     p += " Pure food photography, absolutely no typography, no letters, no writing, no labels, no watermarks, clean composition."
     try:
-        resp = get_http_session().post(f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){image_model}:predict?key={settings.gemini_api_key}", json={"instances": [{"prompt": p}], "parameters": {"sampleCount": 1}}, timeout=30)
+        resp = get_http_session().post(f"https://generativelanguage.googleapis.com/v1beta/models/{image_model}:predict?key={settings.gemini_api_key}", json={"instances": [{"prompt": p}], "parameters": {"sampleCount": 1}}, timeout=30)
         if resp.status_code == 200 and resp.json().get("predictions", [{}])[0].get("bytesBase64Encoded"): return base64.b64decode(resp.json()["predictions"][0]["bytesBase64Encoded"])
     except Exception as e: logger.error("imagen_err", error=str(e))
     return None

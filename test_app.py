@@ -76,6 +76,11 @@ def test_infer_recipe_yield_from_text():
     assert services.infer_recipe_yield_from_text("Ein leckeres Rezept. Reicht für 4 Portionen.") == "4"
     assert services.infer_recipe_yield_from_text("Yield: 12 servings. Bake for 20 mins.") == "12"
 
+def test_extract_mealie_slug():
+    assert services.extract_mealie_slug("https://mealie.local/recipe/pasta?utm=abc") == "pasta"
+    assert services.extract_mealie_slug("https://mealie.local/g/home/r/chili-con-carne") == "chili-con-carne"
+    assert services.extract_mealie_slug("chocolate-cake") == "chocolate-cake"
+
 
 # -----------------------------------------------------------------------------
 # 2. UNIT TESTS: Pydantic Validation & Parser

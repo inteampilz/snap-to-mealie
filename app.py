@@ -31,7 +31,7 @@ from src.services import (
     get_mealie_recipes, get_mealie_data_maps, get_mealie_user_id_by_email, get_recipe_by_slug,
     create_genai_client, editor_transform_recipe, generate_recipe_image_with_gemini,
     direct_save_to_mealie, get_user_stats_snapshot, get_blur_placeholder,
-    get_prompt, get_pdf_prompt, VIDEO_IMPORT_AVAILABLE
+    get_prompt, get_pdf_prompt, VIDEO_IMPORT_AVAILABLE, extract_mealie_slug
 )
 
 # Tasks imports
@@ -267,7 +267,7 @@ try:
         _added_mealie, _added_video, _added_url = False, False, False
 
         for u in _extracted_urls:
-            possible_slug = u.strip('/').split('/')[-1].split('?')[0]
+            possible_slug = extract_mealie_slug(u)
             if any(d in u for d in ["youtube.com", "youtu.be", "instagram.com"]):
                 if u not in st.session_state.get("shared_video_input", ""): st.session_state.shared_video_input = (st.session_state.get("shared_video_input", "") + "\n" + u).strip(); _added_video = True
             elif _mealie_domain in u or "mealie" in u.lower():
@@ -458,7 +458,9 @@ with tab5:
     mealie_area = st.text_area("Mealie Links:", key="shared_mealie_input", placeholder="https://mealie.example.com/recipe/pasta", on_change=set_active_tab, args=(4,))
     recipe_list = get_mealie_recipes(settings.mealie_url, settings.mealie_api_key)
     mealie_selected = st.multiselect("Dropdown:", options=[r["slug"] for r in recipe_list], format_func=lambda x: next((r["name"] for r in recipe_list if r["slug"] == x), x), on_change=set_active_tab, args=(4,))
-    if all_slugs := list(set(mealie_selected + [u.strip().rstrip("/").split("/")[-1] for u in mealie_area.split("\n") if u.strip()])):
+    slugs_from_text = [extract_mealie_slug(u) for u in mealie_area.split("\n") if u.strip()]
+    all_slugs = list(dict.fromkeys([*mealie_selected, *[s for s in slugs_from_text if s]]))
+    if all_slugs:
         c1, c2, c3 = st.columns(3)
         if c1.button("📥 Laden (Original)", disabled=len(all_slugs) > 1, use_container_width=True):
             st.session_state.switch_to_tab = 4; task_id, _ = make_task("Vordergrund: Laden", 1)

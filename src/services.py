@@ -75,16 +75,24 @@ def get_auth_headers(api_key: str, json_content: bool = True) -> Dict[str, str]:
 
 def safe_mealie_request(method: str, url: str, headers: Dict[str, str], **kwargs) -> requests.Response:
     s = get_http_session()
+    last_exc: Optional[Exception] = None
+    last_resp: Optional[requests.Response] = None
     for attempt in range(4):
         try:
             resp = s.request(method, url, headers=headers, timeout=settings.request_timeout, **kwargs)
+            last_resp = resp
             if resp.status_code in (429, 503):
                 time.sleep(float(resp.headers.get("Retry-After", 2 + attempt * 3)))
                 continue
             if resp.status_code < 500: return resp
-        except requests.exceptions.RequestException as exc: last_exc = exc
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
         time.sleep(2 + attempt * 3)
-    raise last_exc
+    if last_exc is not None:
+        raise last_exc
+    if last_resp is not None:
+        return last_resp
+    raise requests.exceptions.RequestException("Request failed before a response was received.")
 
 # --- MEALIE LOGIC ---
 @st.cache_data(ttl=settings.recipe_cache_ttl)

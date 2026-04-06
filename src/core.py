@@ -1,4 +1,4 @@
-import os, re, json, sqlite3, threading, time, sys, io, zipfile, uuid
+import os, re, json, sqlite3, threading, time, sys, io, zipfile, uuid, math
 from typing import Any, Dict, List, Optional, Type, TypeVar
 from textwrap import dedent
 import logging
@@ -155,6 +155,16 @@ def inject_pwa_bootstrap() -> None:
         height=0,
     )
 
+
+# --- TASKS & STATE MANAGEMENT ---
+@st.cache_resource
+def get_task_lock() -> threading.Lock: 
+    return threading.Lock()
+
+@st.cache_resource
+def get_task_registry() -> Dict[str, Dict[str, Any]]: 
+    return {}
+
 # --- PYDANTIC MODELS ---
 class Tag(BaseModel): name: str
 class Category(BaseModel): name: str
@@ -247,15 +257,6 @@ def close_images(images: Optional[List[Image.Image]]) -> None:
     if not images: return
     for img in images: safe_close_image(img)
 
-# --- TASKS & STATE MANAGEMENT ---
-@st.cache_resource
-def get_task_lock() -> threading.Lock: 
-    return threading.Lock()
-
-@st.cache_resource
-def get_task_registry() -> Dict[str, Dict[str, Any]]: 
-    return {}
-
 # --- PROMPTS ---
 JSON_SCHEMA_HINT = """
 {
@@ -328,7 +329,6 @@ def get_prompts_config() -> Dict[str, str]:
         
         with open(PROMPTS_FILE, "r", encoding="utf-8") as f:
             loaded = json.load(f)
-            # Fehlende Schlüssel mit Standards auffüllen
             for k, v in defaults.items():
                 if k not in loaded:
                     loaded[k] = v
@@ -337,9 +337,8 @@ def get_prompts_config() -> Dict[str, str]:
         logger.error("error_loading_prompts", error=str(e))
         return defaults
 
+
 # --- DATABASE ---
-@st.cache_resource
-def get_db_lock() -> threading.Lock: return threading.Lock()
 _db_local = threading.local()
 
 import contextlib

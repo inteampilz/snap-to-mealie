@@ -10,12 +10,31 @@ from urllib3.util.retry import Retry
 # --- IMPORTS ---
 try: from google import genai; from google.genai import types
 except ImportError: genai = None
-try: import yt_dlp
-except ImportError: yt_dlp = None
-try: import trafilatura
-except ImportError: trafilatura = None
-try: import pytesseract
-except ImportError: pytesseract = None
+
+try: 
+    import yt_dlp
+    VIDEO_IMPORT_AVAILABLE = True
+except ImportError: 
+    yt_dlp = None
+    VIDEO_IMPORT_AVAILABLE = False
+
+try: 
+    import trafilatura
+    TRAFILATURA_AVAILABLE = True
+except ImportError: 
+    trafilatura = None
+    TRAFILATURA_AVAILABLE = False
+
+try: 
+    import pytesseract
+    try:
+        pytesseract.get_tesseract_version()
+        OCR_AVAILABLE = True
+    except Exception:
+        OCR_AVAILABLE = False
+except ImportError: 
+    pytesseract = None
+    OCR_AVAILABLE = False
 
 # --- REQUESTS & CACHE ---
 @st.cache_resource

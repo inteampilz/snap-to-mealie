@@ -500,8 +500,32 @@ def fetch_mealie_recipe_text(slug: str, api_url: str, api_key: str) -> str:
     if not recipe: raise RuntimeError(f"Rezept {slug} konnte nicht geladen werden.")
     ings = recipe.get("recipeIngredient", [])
     if any(clean_str(get_nested_name(i.get("food", {}))) or clean_str(i.get("originalText")) for i in ings):
-        cr = {"name": recipe.get("name"), "description": recipe.get("description"), "recipeYield": recipe.get("recipeYield"), "prepTime": recipe.get("prepTime"), "cookTime": recipe.get("performTime"), "tags": [{"name": clean_str(t.get("name"))} for t in recipe.get("tags", [])], "recipeCategory": [{"name": clean_str(c.get("name"))} for c in recipe.get("recipeCategory", [])], "tools": [{"name": clean_str(t.get("name"))} for t in recipe.get("tools", [])], "nutrition": recipe.get("nutrition", {}), "recipeIngredient": [{"referenceId": clean_str(i.get("referenceId")), "originalText": clean_str(i.get("originalText")), "title": clean_str(i.get("title")), "note": clean_str(i.get("note")), "quantity": safe_float(i.get("quantity")), "unit": {"name": clean_str(i.get("unit", {}).get("name"))} if i.get("unit") else None, "food": {"name": clean_str(i.get("food", {}).get("name"))} if i.get("food") else None} for i in ings], "recipeInstructions": [{"title": clean_str(s.get("title")), "text": clean_str(s.get("text")), "ingredientReferences": s.get("ingredientReferences", [])} for s in recipe.get("recipeInstructions", [])]}
-        return "WICHTIGE ANWEISUNG: Dies ist ein bereits geparstes Rezept als JSON. Es herrscht ein striktes ÄNDERUNGSVERBOT für das Array 'recipeIngredient'. Du musst alle Zutaten, 'originalText' und 'food' 1:1 kopieren!\n\n" + json.dumps(cr, ensure_ascii=False)
+        locked_ings = []
+        for idx, ing in enumerate(ings, start=1):
+            original = clean_str(ing.get("originalText"))
+            food_name = clean_str(get_nested_name(ing.get("food", {})))
+            unit_name = clean_str(get_nested_name(ing.get("unit", {})))
+            qty = safe_float(ing.get("quantity"))
+            qty_text = str(qty).rstrip("0").rstrip(".") if isinstance(qty, float) else ""
+            parts = [f"{idx}. {original or clean_str(ing.get('note')) or clean_str(ing.get('display'))}"]
+            if food_name: parts.append(f"food={food_name}")
+            if qty_text: parts.append(f"menge={qty_text}")
+            if unit_name: parts.append(f"einheit={unit_name}")
+            locked_ings.append(" | ".join([p for p in parts if p]))
+
+        rp = [
+            "WICHTIGE ANWEISUNG: Bereits bestehendes Mealie-Rezept.",
+            "Das Array 'recipeIngredient' darf inhaltlich NICHT geändert werden (originalText, food, Menge, Einheit).",
+            f"Titel: {recipe.get('name', '')}",
+            f"Beschreibung: {recipe.get('description', '')}",
+            f"Portionen: {recipe.get('recipeYield', '')}",
+        ]
+        if tags := recipe.get("tags", []): rp.append("Tags: " + ", ".join(clean_str(t.get("name")) for t in tags if clean_str(t.get("name"))))
+        if cats := recipe.get("recipeCategory", []): rp.append("Kategorien: " + ", ".join(clean_str(c.get("name")) for c in cats if clean_str(c.get("name"))))
+        if tls := recipe.get("tools", []): rp.append("Tools: " + ", ".join(clean_str(t.get("name")) for t in tls if clean_str(t.get("name"))))
+        if locked_ings: rp.extend(["\nZUTATEN (LOCKED):", *locked_ings])
+        if insts := recipe.get("recipeInstructions", []): rp.extend(["\nZubereitung:"] + [clean_str(s.get("text", "")) for s in insts if clean_str(s.get("text", ""))])
+        return "\n".join(rp)
     
     rp = [f"Titel: {recipe.get('name', '')}", f"Beschreibung: {recipe.get('description', '')}"]
     if ings: rp.extend(["\nZUTATEN (STRIKTES ÄNDERUNGSVERBOT):"] + [f"- {v}" for i in ings if (v := clean_str(i.get("originalText")) or clean_str(i.get("note")) or clean_str(i.get("display")))])

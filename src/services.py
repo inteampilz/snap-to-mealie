@@ -1,4 +1,4 @@
-import re, json, time, tempfile, shutil, os, io, base64, threading, html
+import re, json, time, tempfile, shutil, os, io, base64, threading, html, uuid
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 import requests

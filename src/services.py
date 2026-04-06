@@ -11,7 +11,7 @@ from src.core import (
     extract_servings_number, safe_float, unique_by_name, safe_close_image,
     get_prompts_config, Recipe, MultiRecipeResponse, EditorRecipeResponse,
     _parse_pydantic_json, get_image_prompts, get_user_uploaded_recipe_rows,
-    JSON_SCHEMA_HINT
+    JSON_SCHEMA_HINT, record_recipe_upload
 )
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry

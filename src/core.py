@@ -247,6 +247,15 @@ def close_images(images: Optional[List[Image.Image]]) -> None:
     if not images: return
     for img in images: safe_close_image(img)
 
+# --- TASKS & STATE MANAGEMENT ---
+@st.cache_resource
+def get_task_lock() -> threading.Lock: 
+    return threading.Lock()
+
+@st.cache_resource
+def get_task_registry() -> Dict[str, Dict[str, Any]]: 
+    return {}
+
 # --- PROMPTS ---
 JSON_SCHEMA_HINT = """
 {

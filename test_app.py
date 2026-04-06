@@ -266,12 +266,11 @@ def test_auto_generate_cover_image_fallback_mocked(mock_generate):
     
     core.save_image_prompt("Lars Style", "Lars Prompt Text", user_label="Lars Graf", is_default=True)
     services.auto_generate_cover_image(client_bundle, {"name": "Test"}, None, owner_label="Max")
-    mock_generate.assert_called_with(client_bundle, "Test", "", image_model="imagen-4.0-generate-001", custom_style="Lars Prompt Text")
+    mock_generate.assert_called_with(client_bundle, "Test", "", custom_style="Lars Prompt Text")
     
     core.save_image_prompt("Max Style", "Max Prompt Text", user_label="Max", is_default=True)
     services.auto_generate_cover_image(client_bundle, {"name": "Test"}, None, owner_label="Max")
-    mock_generate.assert_called_with(client_bundle, "Test", "", image_model="imagen-4.0-generate-001", custom_style="Max Prompt Text")
-
+    mock_generate.assert_called_with(client_bundle, "Test", "", custom_style="Max Prompt Text")
 
 if __name__ == "__main__":
     import sys

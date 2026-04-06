@@ -155,7 +155,6 @@ def inject_pwa_bootstrap() -> None:
         height=0,
     )
 
-
 # --- TASKS & STATE MANAGEMENT ---
 @st.cache_resource
 def get_task_lock() -> threading.Lock: 
@@ -164,6 +163,7 @@ def get_task_lock() -> threading.Lock:
 @st.cache_resource
 def get_task_registry() -> Dict[str, Dict[str, Any]]: 
     return {}
+
 
 # --- PYDANTIC MODELS ---
 class Tag(BaseModel): name: str
@@ -339,6 +339,9 @@ def get_prompts_config() -> Dict[str, str]:
 
 
 # --- DATABASE ---
+@st.cache_resource
+def get_db_lock() -> threading.Lock: return threading.Lock()
+
 _db_local = threading.local()
 
 import contextlib

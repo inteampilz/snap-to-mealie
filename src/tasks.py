@@ -266,4 +266,8 @@ def background_mealie_batch_process(task_id: str, slug_list: List[str], mealie_u
         with get_task_lock():
             if get_task_registry().get(task_id, {}).get("stop_requested"): task_update(task_id, status="abgeschlossen", last_detail="Gestoppt"); return
         task_update(task_id, status="abgeschlossen", last_detail="Fertig")
-    asyncio.run(run_tasks())
+    try:
+        asyncio.run(run_tasks())
+    except Exception as exc:
+        task_append(task_id, "errors", f"❌ Stapelverarbeitung fehlgeschlagen: {exc}")
+        task_update(task_id, status="abgebrochen", last_detail="Mit Fehler beendet")

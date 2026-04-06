@@ -275,6 +275,25 @@ def test_process_single_pdf_batch_item_updates_task_without_nameerror(
     assert current == 1
     mock_analyze_pdf.assert_called_once()
 
+@patch("src.tasks.asyncio.run", side_effect=RuntimeError("boom"))
+def test_background_mealie_batch_process_marks_task_aborted_on_unexpected_error(mock_asyncio_run):
+    task_id, _ = tasks.make_task("Mealie-Test", 1)
+    tasks.background_mealie_batch_process(
+        task_id=task_id,
+        slug_list=["test-slug"],
+        mealie_url="http://fake-mealie",
+        mealie_api_key="fake-key",
+        gemini_api_key="fake-gemini",
+        prompt="prompt",
+        preloaded_maps=({}, {}, {}, {}, {}),
+        target_mode="editor",
+    )
+
+    task = core.get_task_registry()[task_id]
+    assert task["status"] == "abgebrochen"
+    assert task["errors"]
+    mock_asyncio_run.assert_called_once()
+
 # -----------------------------------------------------------------------------
 # 6. INTEGRATION TESTS (MOCKED): APIs
 # -----------------------------------------------------------------------------

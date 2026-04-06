@@ -9,6 +9,7 @@ import math
 import subprocess
 import sys
 import gc
+from urllib.parse import urlparse
 
 import streamlit as st
 import streamlit.components.v1 as components

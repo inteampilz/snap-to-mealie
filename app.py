@@ -22,7 +22,7 @@ from src.core import (
     register_active_user, get_active_users_snapshot, generate_extension_zip,
     get_image_prompts, save_image_prompt, set_default_image_prompt, delete_image_prompt,
     get_editor_queue, delete_from_editor_queue, clean_str, extract_servings_number, format_duration,
-    get_all_uploaded_recipe_rows
+    get_all_uploaded_recipe_rows, get_nested_name
 )
 
 # Services imports

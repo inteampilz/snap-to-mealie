@@ -134,6 +134,31 @@ def test_extract_recipe_jsonld_text():
     assert "- Nudeln" in extracted
     assert "1. Kochen" in extracted
 
+@patch("src.services.get_recipe_by_slug")
+def test_fetch_mealie_recipe_text_uses_compact_locked_format(mock_get_recipe_by_slug):
+    mock_get_recipe_by_slug.return_value = {
+        "name": "Linsensuppe",
+        "description": "Herzhaft",
+        "recipeYield": "4",
+        "tags": [{"name": "Suppe"}],
+        "recipeCategory": [{"name": "Abendessen"}],
+        "tools": [{"name": "Topf"}],
+        "recipeIngredient": [
+            {
+                "referenceId": "ing-1",
+                "originalText": "250 g Linsen",
+                "quantity": 250,
+                "unit": {"name": "g"},
+                "food": {"name": "Linsen"},
+            }
+        ],
+        "recipeInstructions": [{"text": "Alles köcheln lassen."}],
+    }
+    text = services.fetch_mealie_recipe_text("linsensuppe", "http://mealie", "api-key")
+    assert "ZUTATEN (LOCKED)" in text
+    assert "food=Linsen" in text
+    assert "\"recipeIngredient\"" not in text
+
 
 # -----------------------------------------------------------------------------
 # 4. DATENBANK TESTS: Lokale Speicherung & State

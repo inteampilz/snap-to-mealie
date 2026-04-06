@@ -1,9 +1,18 @@
-import re, json, time, tempfile, shutil, os, io, base64, threading
+import re, json, time, tempfile, shutil, os, io, base64, threading, html
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urljoin, urlparse
 import requests
 import streamlit as st
 from PIL import Image, ImageOps, ImageFilter
-from src.core import settings, logger, get_db_lock, db_conn, db_store_recipes, db_find_recipe_slug, db_delete_recipe, db_delete_recipe_by_slug, db_get_mapping, db_set_mapping, db_bulk_replace_mappings, clean_str, normalize_name, slugify, get_nested_name, extract_servings_number, safe_float, unique_by_name, safe_close_image, get_prompts_config, Recipe, MultiRecipeResponse, EditorRecipeResponse, _parse_pydantic_json, get_image_prompts, get_user_uploaded_recipe_rows, JSON_SCHEMA_HINT
+from src.core import (
+    settings, logger, get_db_lock, db_conn, db_store_recipes, db_find_recipe_slug,
+    db_delete_recipe, db_delete_recipe_by_slug, db_get_mapping, db_set_mapping,
+    db_bulk_replace_mappings, clean_str, normalize_name, slugify, get_nested_name,
+    extract_servings_number, safe_float, unique_by_name, safe_close_image,
+    get_prompts_config, Recipe, MultiRecipeResponse, EditorRecipeResponse,
+    _parse_pydantic_json, get_image_prompts, get_user_uploaded_recipe_rows,
+    JSON_SCHEMA_HINT
+)
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -35,6 +44,20 @@ try:
 except ImportError: 
     pytesseract = None
     OCR_AVAILABLE = False
+
+
+# --- UTILS ---
+def infer_recipe_yield_from_text(text: str) -> str:
+    raw = clean_str(text)
+    if not raw: return ""
+    for pattern in [
+        r"(?:ergibt|für|macht|reicht für)\s*(\d+(?:\s*[-–]\s*\d+)?)\s*(?:portionen|personen|servings?)",
+        r"(?:serves|makes|yield(?:s)?|portionen|portion|personen|servings?)\s*[:\-]?\s*(\d+(?:\s*[-–]\s*\d+)?)",
+        r"(?:recipeyield|yield)\s*[:\-]?\s*(\d+(?:\s*[-–]\s*\d+)?)"
+    ]:
+        if match := re.search(pattern, raw, flags=re.IGNORECASE): return clean_str(match.group(1)).replace(" ", "")
+    return ""
+
 
 # --- REQUESTS & CACHE ---
 @st.cache_resource
@@ -280,6 +303,12 @@ def analyze_content_with_gemini(client, prompt: str, images: Optional[List[Image
             if last_err: contents.append(f"WARNING: Fix validation error: '{last_err}'")
             resp = client.models.generate_content(model=settings.gemini_model, contents=contents, config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=Recipe, temperature=0.1))
             pd = _parse_pydantic_json(Recipe, resp.text).model_dump(exclude_none=True)
+            
+            fallback_yield = infer_recipe_yield_from_text("\n".join([clean_str(text), clean_str(ocr)]))
+            current_yield = clean_str(pd.get("recipeYield"))
+            if fallback_yield and (not current_yield or current_yield in {"1", "1 Portion", "1 Portionen", "1 Person", "1 serving"}):
+                pd["recipeYield"] = fallback_yield
+                
             if not pd.get("recipeIngredient") and not pd.get("recipeInstructions") and attempt < 1: raise ValueError("Keine Zutaten gefunden.")
             return pd
         except Exception as exc:

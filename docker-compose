@@ -10,26 +10,27 @@ services:
     container_name: snap-to-mealie
     networks:
       - proxy
-    
     environment:
-      # --- LOGGING ---
       - LOG_LEVEL=INFO
-      - PYTHONUNBUFFERED=1 # Echtzeit-Logging im Docker-Log
+      - PYTHONUNBUFFERED=1
+      # Der Pfad zur Datenbank wird auf das externe Volume umgebogen
+      - SNAP_CACHE_DB=/app/data/snap_cache.sqlite3
+      
+      # --- GITHUB AUTHENTIFIZIERUNG ---
+      # Ersetze dies durch deinen GitHub Token (Classic PAT mit "repo" Rechten)
+      - GITHUB_TOKEN=ghp_dein_github_token_hier_einfuegen
       
       # --- MEALIE & GEMINI ---
       - MEALIE_URL=http://YOUR_MEALIE_IP:9000
       - MEALIE_API_KEY=your_mealie_api_token
       - GEMINI_API_KEY=your_gemini_api_key
       
-      # --- OIDC CONFIGURATION ---
-      - OIDC_CLIENT_ID=your_oidc_client_id
-      - OIDC_CLIENT_SECRET=your_oidc_client_secret
-      - OIDC_DISCOVERY_URL=https://auth.yourdomain.com/application/o/snap-mealie/.well-known/openid-configuration
-      - OIDC_REDIRECT_URI=https://snap.yourdomain.com/oauth2callback
-      - OIDC_COOKIE_SECRET=replace_this_with_a_long_random_string
-      
-      - STREAMLIT_SERVER_HEADLESS=true
-      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1000
+      # --- OIDC (Optional) ---
+      - OIDC_CLIENT_ID=
+      - OIDC_CLIENT_SECRET=
+      - OIDC_DISCOVERY_URL=
+      - OIDC_REDIRECT_URI=
+      - OIDC_COOKIE_SECRET=
 
     deploy:
       resources:
@@ -39,8 +40,40 @@ services:
           memory: 1G
 
     volumes:
-      - /path/to/your/host/folder:/app 
+      # Hier wird die SQLite-DB sicher abgelegt, geschützt vor Git-Resets
+      - snap_data:/app/data
+      
     working_dir: /app
     
-    command: sh -c "pip install --no-cache-dir streamlit google-genai requests pillow authlib && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
+    # MAGIC HAPPENS HERE: Das Auto-Update Script mit GitHub Token Support
+    command: >
+      /bin/bash -c "
+      echo '🔄 Checking for updates from GitHub...';
+      apt-get update && apt-get install -y git;
+      if [ ! -d '.git' ]; then
+        git init;
+        if [ -z \"$$GITHUB_TOKEN\" ]; then
+          echo 'Info: No GITHUB_TOKEN provided, trying public checkout.';
+          git remote add origin https://github.com/inteampilz/snap-to-mealie.git;
+        else
+          echo 'Info: GITHUB_TOKEN found, using authenticated checkout.';
+          git remote add origin https://$$GITHUB_TOKEN@github.com/inteampilz/snap-to-mealie.git;
+        fi;
+      fi;
+      
+      git fetch --all && git reset --hard origin/main && git branch --set-upstream-to=origin/main main || echo '⚠️ Git Fetch fehlgeschlagen! Ist der Repo-Name korrekt und der Token gültig?';
+      
+      if [ -f 'requirements.txt' ]; then
+        echo '📦 Installing dependencies...';
+        pip install --no-cache-dir -r requirements.txt;
+        echo '🚀 Starting Snap-to-Mealie...';
+        streamlit run app.py --server.port=8501 --server.address=0.0.0.0;
+      else
+        echo '❌ FEHLER: Quellcode nicht gefunden! requirements.txt existiert nicht. Bitte prüfe dein GitHub-Repo und den Token.';
+        sleep 60;
+      fi
+      "
     restart: unless-stopped
+
+volumes:
+  snap_data:

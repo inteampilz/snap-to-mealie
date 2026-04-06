@@ -8,3 +8,4 @@ structlog>=24.1.0
 trafilatura>=1.8.1
 yt-dlp>=2024.4.9
 pytesseract>=0.3.10
+pytest>=8.0.0

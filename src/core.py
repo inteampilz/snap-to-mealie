@@ -88,4 +88,206 @@ class EditorRecipeResponse(BaseModel):
 T = TypeVar('T', bound=BaseModel)
 def _parse_pydantic_json(model_class: Type[T], text: str) -> T:
     clean_text = text.strip()
-    if clean_text.startswith("
+    bt = chr(96) * 3
+    if clean_text.startswith(bt + "json"): clean_text = clean_text[7:]
+    elif clean_text.startswith(bt): clean_text = clean_text[3:]
+    if clean_text.endswith(bt): clean_text = clean_text[:-3]
+    return model_class.model_validate_json(clean_text.strip())
+
+# --- UTILS ---
+def clean_str(val: Any) -> str:
+    s = str(val).strip() if val else ""
+    return "" if s.lower() in {"none", "null", "n/a", "na", "-", "nan", "leer"} else s
+def normalize_name(text: str) -> str:
+    s = text.lower().strip() if text else ""
+    return re.sub(r'[^a-z0-9]', '', s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
+def slugify(text: str) -> str:
+    t = clean_str(text).lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    return re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+def get_nested_name(obj: Any) -> str: return obj.get("name", "") if isinstance(obj, dict) else str(obj) if obj else ""
+def extract_servings_number(value: Any) -> Optional[int]:
+    match = re.search(r"[0-9]+", clean_str(value))
+    return max(1, int(match.group(0))) if match else None
+def safe_float(val: Any) -> Optional[float]:
+    try:
+        num = float(str(val).replace(",", "."))
+        return None if math.isnan(num) or math.isinf(num) else num
+    except Exception: return None
+def unique_by_name(items: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    seen, out = set(), []
+    for item in items:
+        n = clean_str(item.get("name"))
+        if n and normalize_name(n) not in seen:
+            seen.add(normalize_name(n))
+            out.append({"name": n})
+    return out
+def format_duration(seconds: Optional[float]) -> str:
+    if seconds is None: return "wird berechnet"
+    m, s = divmod(max(0, int(seconds)), 60)
+    h, m = divmod(m, 60)
+    return f"{h}h {m}m" if h > 0 else f"{m}m {s}s" if m > 0 else f"{s}s"
+
+# --- DATABASE ---
+@st.cache_resource
+def get_db_lock() -> threading.Lock: return threading.Lock()
+_db_local = threading.local()
+
+import contextlib
+@contextlib.contextmanager
+def db_conn():
+    if not hasattr(_db_local, "sqlite_conn"):
+        os.makedirs(os.path.dirname(settings.snap_cache_db), exist_ok=True)
+        conn = sqlite3.connect(settings.snap_cache_db, check_same_thread=False, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        _db_local.sqlite_conn = conn
+    yield _db_local.sqlite_conn
+
+def init_cache_db() -> None:
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS mappings (endpoint TEXT NOT NULL, name TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(endpoint, name))")
+        conn.execute("CREATE TABLE IF NOT EXISTS recipes (norm_name PRIMARY KEY, recipe_name TEXT NOT NULL, slug TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS uploads (user_key TEXT NOT NULL, recipe_slug TEXT NOT NULL, recipe_name TEXT NOT NULL, user_label TEXT, user_email TEXT, source TEXT NOT NULL, first_uploaded_at INTEGER NOT NULL, last_uploaded_at INTEGER NOT NULL, upload_count INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(user_key, recipe_slug))")
+        conn.execute("CREATE TABLE IF NOT EXISTS image_prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, prompt_text TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0)")
+        try: conn.execute("ALTER TABLE image_prompts ADD COLUMN user_label TEXT DEFAULT ''")
+        except sqlite3.OperationalError: pass
+        conn.execute("CREATE TABLE IF NOT EXISTS editor_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, user_key TEXT NOT NULL, recipe_name TEXT NOT NULL, recipe_data TEXT NOT NULL, cover_image BLOB, created_at INTEGER NOT NULL)")
+        try: conn.execute("DELETE FROM image_prompts WHERE prompt_text LIKE 'http://%' OR prompt_text LIKE 'https://%'")
+        except Exception: pass
+        conn.commit()
+
+# Expose standard DB operations
+def get_image_prompts(user_label: str = "") -> List[Dict[str, Any]]:
+    with get_db_lock(), db_conn() as conn:
+        q = "SELECT id, name, prompt_text, is_default, user_label FROM image_prompts WHERE user_label = ? OR user_label = '' OR (user_label LIKE '%Lars Graf%' AND is_default = 1) ORDER BY name" if user_label else "SELECT id, name, prompt_text, is_default, user_label FROM image_prompts ORDER BY name"
+        rows = conn.execute(q, (user_label,) if user_label else ()).fetchall()
+    return [{"id": r[0], "name": r[1], "text": r[2], "is_default": bool(r[3]), "user_label": r[4] if len(r) > 4 else ""} for r in rows]
+
+def save_image_prompt(name: str, text: str, user_label: str = "", is_default: bool = False) -> None:
+    with get_db_lock(), db_conn() as conn:
+        if is_default: conn.execute("UPDATE image_prompts SET is_default = 0 WHERE user_label = ?", (user_label,))
+        conn.execute("INSERT INTO image_prompts (name, prompt_text, is_default, user_label) VALUES (?, ?, ?, ?)", (name, text, int(is_default), user_label))
+        conn.commit()
+
+def set_default_image_prompt(prompt_id: int, user_label: str = "") -> None:
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("UPDATE image_prompts SET is_default = 0 WHERE user_label = ?", (user_label,))
+        conn.execute("UPDATE image_prompts SET is_default = 1 WHERE id = ?", (prompt_id,))
+        conn.commit()
+
+def delete_image_prompt(prompt_id: int) -> None:
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("DELETE FROM image_prompts WHERE id = ?", (prompt_id,))
+        conn.commit()
+
+def add_to_editor_queue(user_key: str, recipe_data: Dict[str, Any], cover_image: Optional[bytes] = None) -> None:
+    name = clean_str(recipe_data.get("name", "Unbenanntes Rezept"))
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("INSERT INTO editor_queue (user_key, recipe_name, recipe_data, cover_image, created_at) VALUES (?, ?, ?, ?, ?)", (user_key, name, json.dumps(recipe_data, ensure_ascii=False), cover_image, int(time.time())))
+        conn.commit()
+
+def get_editor_queue(user_key: str) -> List[Dict[str, Any]]:
+    with get_db_lock(), db_conn() as conn:
+        rows = conn.execute("SELECT id, recipe_name, recipe_data, cover_image, created_at FROM editor_queue WHERE user_key = ? ORDER BY created_at ASC", (user_key,)).fetchall()
+    return [{"id": r[0], "recipe_name": r[1], "recipe_data": json.loads(r[2]), "cover_image": r[3], "created_at": r[4]} for r in rows]
+
+def delete_from_editor_queue(item_id: int) -> None:
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("DELETE FROM editor_queue WHERE id = ?", (item_id,))
+        conn.commit()
+
+def db_find_recipe_slug(recipe_name: str) -> Optional[str]:
+    k = normalize_name(recipe_name)
+    with get_db_lock(), db_conn() as conn:
+        row = conn.execute("SELECT slug FROM recipes WHERE norm_name = ?", (k,)).fetchone()
+    return row[0] if row else None
+
+def db_delete_recipe(recipe_name: str) -> None:
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("DELETE FROM recipes WHERE norm_name = ?", (normalize_name(recipe_name),))
+        conn.commit()
+
+def db_delete_recipe_by_slug(slug: str) -> None:
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("DELETE FROM recipes WHERE slug = ?", (clean_str(slug),))
+        conn.commit()
+
+def db_store_recipes(recipes: List[Dict[str, str]]) -> None:
+    rows = [(normalize_name(r.get("name")), clean_str(r.get("name")), clean_str(r.get("slug")), int(time.time())) for r in recipes if r.get("name") and r.get("slug")]
+    if rows:
+        with get_db_lock(), db_conn() as conn:
+            conn.executemany("INSERT INTO recipes(norm_name, recipe_name, slug, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(norm_name) DO UPDATE SET recipe_name=excluded.recipe_name, slug=excluded.slug, updated_at=excluded.updated_at", rows)
+            conn.commit()
+
+def db_get_mapping(endpoint: str, name: str) -> Optional[str]:
+    with get_db_lock(), db_conn() as conn:
+        row = conn.execute("SELECT item_id FROM mappings WHERE endpoint = ? AND name = ?", (endpoint, normalize_name(name))).fetchone()
+    return row[0] if row else None
+
+def db_set_mapping(endpoint: str, name: str, item_id: str) -> None:
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("INSERT INTO mappings(endpoint, name, item_id, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(endpoint, name) DO UPDATE SET item_id=excluded.item_id, updated_at=excluded.updated_at", (endpoint, normalize_name(name), clean_str(item_id), int(time.time())))
+        conn.commit()
+
+def db_bulk_replace_mappings(endpoint: str, mapping: Dict[str, str]) -> None:
+    rows = [(endpoint, normalize_name(k), clean_str(v), int(time.time())) for k, v in mapping.items() if normalize_name(k) and clean_str(v)]
+    if rows:
+        with get_db_lock(), db_conn() as conn:
+            conn.executemany("INSERT INTO mappings(endpoint, name, item_id, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(endpoint, name) DO UPDATE SET item_id=excluded.item_id, updated_at=excluded.updated_at", rows)
+            conn.commit()
+
+# --- AUTH & USERS ---
+def has_streamlit_auth() -> bool: return all(hasattr(st, attr) for attr in ["login", "logout"]) and hasattr(st, "user")
+def is_streamlit_user_logged_in() -> bool: return True if getattr(st, "user", None) is None else bool(getattr(st.user, "is_logged_in", False))
+def get_current_user_email() -> str: return clean_str(getattr(getattr(st, "user", None), "email", ""))
+def get_current_user_label() -> str:
+    user_obj = getattr(st, "user", None)
+    for attr in ["name", "preferred_username", "email", "id"]:
+        val = clean_str(getattr(user_obj, attr, ""))
+        if val: return val
+    return "Anonym"
+def get_current_user_key() -> str: return get_current_user_email().lower() or get_current_user_label().lower() or "anonym"
+def is_admin_user() -> bool: return True if not ADMIN_USERS_LIST else (get_current_user_email().lower() in ADMIN_USERS_LIST or get_current_user_label().lower() in ADMIN_USERS_LIST)
+
+@st.cache_resource
+def get_active_user_registry() -> Dict[str, Dict[str, Any]]: return {}
+
+def register_active_user() -> None:
+    if "_snap_session_id" not in st.session_state: st.session_state._snap_session_id = str(uuid.uuid4())
+    get_active_user_registry()[st.session_state._snap_session_id] = {"label": get_current_user_label(), "email": get_current_user_email(), "last_seen": time.time()}
+
+def get_active_users_snapshot() -> List[Dict[str, Any]]:
+    cutoff = time.time() - settings.active_user_ttl_sec
+    reg = get_active_user_registry()
+    for sid in list(reg.keys()):
+        if reg[sid].get("last_seen", 0) < cutoff: del reg[sid]
+    deduped = {}
+    for user in reg.values():
+        k = (clean_str(user.get("email")) or clean_str(user.get("label")) or "anonym").lower()
+        if k not in deduped or user.get("last_seen", 0) > deduped[k].get("last_seen", 0): deduped[k] = user
+    return sorted(deduped.values(), key=lambda x: (x.get("label") or "", x.get("email") or ""))
+
+def record_recipe_upload(user_key: str, recipe_slug: str, recipe_name: str, user_label: str, user_email: str) -> None:
+    with get_db_lock(), db_conn() as conn:
+        conn.execute("INSERT INTO uploads(user_key, recipe_slug, recipe_name, user_label, user_email, source, first_uploaded_at, last_uploaded_at, upload_count) VALUES (?, ?, ?, ?, ?, 'snap_to_mealie', ?, ?, 1) ON CONFLICT(user_key, recipe_slug) DO UPDATE SET recipe_name=excluded.recipe_name, user_label=excluded.user_label, user_email=excluded.user_email, source=excluded.source, last_uploaded_at=excluded.last_uploaded_at, upload_count=uploads.upload_count + 1", (clean_str(user_key).lower(), clean_str(recipe_slug), clean_str(recipe_name), clean_str(user_label), clean_str(user_email), int(time.time()), int(time.time())))
+        conn.commit()
+
+def get_user_uploaded_recipe_rows(user_key: str) -> List[Dict[str, Any]]:
+    with get_db_lock(), db_conn() as conn:
+        rows = conn.execute("SELECT recipe_slug, recipe_name, user_label, user_email, first_uploaded_at, last_uploaded_at, upload_count FROM uploads WHERE user_key = ? AND source = 'snap_to_mealie' ORDER BY last_uploaded_at DESC", (clean_str(user_key).lower(),)).fetchall()
+    return [{"recipe_slug": r[0], "recipe_name": r[1], "user_label": r[2], "user_email": r[3], "first_uploaded_at": r[4], "last_uploaded_at": r[5], "upload_count": r[6]} for r in rows]
+
+def get_all_uploaded_recipe_rows(limit: int = 100) -> List[Dict[str, Any]]:
+    with get_db_lock(), db_conn() as conn:
+        rows = conn.execute("SELECT recipe_slug, recipe_name, user_label, user_email, first_uploaded_at, last_uploaded_at, upload_count FROM uploads WHERE source = 'snap_to_mealie' ORDER BY last_uploaded_at DESC LIMIT ?", (limit,)).fetchall()
+    return [{"recipe_slug": r[0], "recipe_name": r[1], "user_label": r[2] or "Anonym", "user_email": r[3], "first_uploaded_at": r[4], "last_uploaded_at": r[5], "upload_count": r[6]} for r in rows]
+
+def generate_extension_zip() -> bytes:
+    manifest = '{"manifest_version":3,"name":"Snap-to-Mealie Sender","version":"1.0","permissions":["activeTab","storage"],"action":{"default_title":"An Snap-to-Mealie senden"},"options_page":"options.html","background":{"service_worker":"background.js"}}'
+    bg_js = 'chrome.action.onClicked.addListener((tab) => { chrome.storage.sync.get(["snapUrl"], function(result) { if (!result.snapUrl) { chrome.runtime.openOptionsPage(); return; } chrome.tabs.create({ url: result.snapUrl.replace(/\\/$/, "") + "/?shared_url=" + encodeURIComponent(tab.url) }); }); });'
+    opt_html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Setup</title><style>body{font-family:sans-serif;padding:20px;max-width:400px}input{width:100%;padding:8px;margin:10px 0}button{background:#6750a4;color:#fff;border:none;padding:10px;width:100%;cursor:pointer}.status{color:green;margin-top:10px}</style></head><body><h2>⚙️ Setup</h2><input type="text" id="urlInput" placeholder="https://..."><button id="saveBtn">Speichern</button><div id="status" class="status"></div><script src="options.js"></script></body></html>'
+    opt_js = 'document.addEventListener("DOMContentLoaded",()=>{chrome.storage.sync.get(["snapUrl"],r=>{if(r.snapUrl)document.getElementById("urlInput").value=r.snapUrl});document.getElementById("saveBtn").addEventListener("click",()=>{const url=document.getElementById("urlInput").value.trim();if(url){chrome.storage.sync.set({snapUrl:url},()=>{const s=document.getElementById("status");s.textContent="✅ Gespeichert!";setTimeout(()=>s.textContent="",2000)})}})});'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, d in [("manifest.json", manifest), ("background.js", bg_js), ("options.html", opt_html), ("options.js", opt_js)]: z.writestr(n, d)
+    return buf.getvalue()

@@ -6,6 +6,7 @@ import io
 import time
 import pytest
 from unittest.mock import patch, MagicMock
+import requests
 
 # -----------------------------------------------------------------------------
 # Setup: Sichere temporäre Datenbank für alle Tests
@@ -217,6 +218,34 @@ def test_generate_extension_zip():
         assert "background.js" in file_list
         assert "options.html" in file_list
 
+@patch('src.tasks.gc.collect')
+@patch('src.tasks.os.remove')
+@patch('src.tasks.os.path.exists', return_value=True)
+@patch('src.tasks.add_to_editor_queue')
+@patch('src.tasks.auto_generate_cover_image', return_value=b"cover")
+@patch('src.tasks.analyze_pdf_with_gemini', return_value=[{"name": "PDF Rezept"}])
+@patch('src.tasks.create_genai_client', return_value=object())
+def test_process_single_pdf_batch_item_updates_task_without_nameerror(
+    mock_client, mock_analyze_pdf, mock_cover, mock_queue, mock_exists, mock_remove, mock_gc
+):
+    task_id, _ = tasks.make_task("PDF-Test", 1)
+    tasks._process_single_pdf_batch_item(
+        task_id=task_id,
+        idx=0,
+        pdf_bytes=b"%PDF-1.4",
+        total=1,
+        mealie_url="http://fake-mealie",
+        mealie_api_key="fake-key",
+        gemini_api_key="fake-gemini",
+        prompt="prompt",
+        preloaded_maps=({}, {}, {}, {}, {}),
+        target_mode="editor",
+    )
+
+    current = core.get_task_registry()[task_id]["current"]
+    assert current == 1
+    mock_analyze_pdf.assert_called_once()
+
 # -----------------------------------------------------------------------------
 # 6. INTEGRATION TESTS (MOCKED): APIs
 # -----------------------------------------------------------------------------
@@ -230,6 +259,31 @@ def test_get_mealie_recipes_mocked(mock_request):
     recipes = services.get_mealie_recipes("http://fake-mealie", "fake-key")
     assert len(recipes) == 1
     assert recipes[0]["name"] == "Lasagne"
+
+@patch('src.services.get_http_session')
+def test_safe_mealie_request_returns_last_response_on_repeated_5xx(mock_get_session):
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 500
+    mock_resp.headers = {}
+    mock_session.request.return_value = mock_resp
+    mock_get_session.return_value = mock_session
+
+    with patch('src.services.time.sleep'):
+        resp = services.safe_mealie_request("GET", "http://fake-mealie/api/test", headers={})
+
+    assert resp is mock_resp
+    assert mock_session.request.call_count == 4
+
+@patch('src.services.get_http_session')
+def test_safe_mealie_request_raises_last_transport_error(mock_get_session):
+    mock_session = MagicMock()
+    mock_session.request.side_effect = requests.exceptions.ConnectionError("network down")
+    mock_get_session.return_value = mock_session
+
+    with patch('src.services.time.sleep'):
+        with pytest.raises(requests.exceptions.ConnectionError):
+            services.safe_mealie_request("GET", "http://fake-mealie/api/test", headers={})
 
 @patch('requests.Session.get')
 def test_fetch_url_text_and_image_mocked(mock_session_get):

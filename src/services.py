@@ -476,6 +476,25 @@ def direct_save_to_mealie(parsed_data: Dict, api_url: str, api_key: str, cover_i
     except Exception: pass
     return True, slug
 
+def extract_mealie_slug(value: str) -> str:
+    raw = clean_str(value)
+    if not raw:
+        return ""
+    if "://" not in raw:
+        return raw.strip("/").split("/")[-1].split("?")[0].split("#")[0]
+    try:
+        parsed = urlparse(raw)
+        parts = [p for p in parsed.path.split("/") if p]
+        if not parts:
+            return ""
+        if "recipe" in parts:
+            idx = parts.index("recipe")
+            if idx + 1 < len(parts):
+                return clean_str(parts[idx + 1]).split("?")[0].split("#")[0]
+        return clean_str(parts[-1]).split("?")[0].split("#")[0]
+    except Exception:
+        return raw.strip("/").split("/")[-1].split("?")[0].split("#")[0]
+
 def fetch_mealie_recipe_text(slug: str, api_url: str, api_key: str) -> str:
     recipe = get_recipe_by_slug(api_url, api_key, slug)
     if not recipe: raise RuntimeError(f"Rezept {slug} konnte nicht geladen werden.")

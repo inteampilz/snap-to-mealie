@@ -194,7 +194,12 @@ def _render_task_monitor_body() -> None:
             st.divider()
             st.markdown("**Aktive Nutzer**")
             if active_users := get_active_users_snapshot():
-                for u in active_users: st.write(f"• {u.get('label') or 'Unbekannt'} {f"— {u.get('email')}" if u.get('email') and u.get('email') != u.get('label') else ''} · aktiv vor {max(0, int(time.time() - u.get('last_seen', time.time())))}s")
+                for u in active_users:
+                    lbl = u.get('label') or 'Unbekannt'
+                    eml = u.get('email')
+                    eml_str = f" — {eml}" if eml and eml != lbl else ""
+                    ago = max(0, int(time.time() - u.get('last_seen', time.time())))
+                    st.write(f"• {lbl}{eml_str} · aktiv vor {ago}s")
             else: st.info("Keine aktiven Nutzer erkannt.")
             st.markdown("**Laufende Rezeptumwandlungen**")
             if running_tasks := get_running_tasks_snapshot():
@@ -405,7 +410,7 @@ if not st.session_state.collected_images and not st.session_state.collected_pdfs
 
 with tab3:
     ui_card("URL-Import", "Füge eine oder mehrere Rezept-URLs ein.")
-    url_area = st.text_area("URLs (eine pro Zeile):", key="shared_urls_input", placeholder="[https://example.com/rezept-1](https://example.com/rezept-1)", on_change=set_active_tab, args=(2,))
+    url_area = st.text_area("URLs (eine pro Zeile):", key="shared_urls_input", placeholder="https://example.com/rezept-1", on_change=set_active_tab, args=(2,))
     urls, invalid_urls = [], []
     for u in [u.strip() for u in url_area.split("\n") if u.strip()]:
         check_u = u if u.startswith(('http://', 'https://')) else f"https://{u}"
@@ -432,7 +437,7 @@ with tab3:
 with tab4:
     ui_card("Video-Import", "YouTube- oder Instagram-Links.")
     if not VIDEO_IMPORT_AVAILABLE: st.warning("yt-dlp fehlt.")
-    video_area = st.text_area("Video Links (eine pro Zeile):", key="shared_video_input", placeholder="[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=)...", on_change=set_active_tab, args=(3,))
+    video_area = st.text_area("Video Links (eine pro Zeile):", key="shared_video_input", placeholder="https://www.youtube.com/watch?v=...", on_change=set_active_tab, args=(3,))
     video_urls, invalid_vurls = [], []
     for u in [u.strip() for u in video_area.split("\n") if u.strip()]:
         check_u = u if u.startswith(('http://', 'https://')) else f"https://{u}"
@@ -458,7 +463,7 @@ with tab4:
 
 with tab5:
     ui_card("Mealie-Rezepte überarbeiten", "Rezepte aus Mealie sichten und verbessern.")
-    mealie_area = st.text_area("Mealie Links:", key="shared_mealie_input", placeholder="[https://mealie.example.com/recipe/pasta](https://mealie.example.com/recipe/pasta)", on_change=set_active_tab, args=(4,))
+    mealie_area = st.text_area("Mealie Links:", key="shared_mealie_input", placeholder="https://mealie.example.com/recipe/pasta", on_change=set_active_tab, args=(4,))
     recipe_list = get_mealie_recipes(settings.mealie_url, settings.mealie_api_key)
     mealie_selected = st.multiselect("Dropdown:", options=[r["slug"] for r in recipe_list], format_func=lambda x: next((r["name"] for r in recipe_list if r["slug"] == x), x), on_change=set_active_tab, args=(4,))
     if all_slugs := list(set(mealie_selected + [u.strip().rstrip("/").split("/")[-1] for u in mealie_area.split("\n") if u.strip()])):

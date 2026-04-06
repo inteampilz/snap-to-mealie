@@ -238,6 +238,96 @@ def format_duration(seconds: Optional[float]) -> str:
     h, m = divmod(m, 60)
     return f"{h}h {m}m" if h > 0 else f"{m}m {s}s" if m > 0 else f"{s}s"
 
+def safe_close_image(img: Optional[Image.Image]) -> None:
+    if img is None: return
+    try: img.close()
+    except Exception: pass
+
+def close_images(images: Optional[List[Image.Image]]) -> None:
+    if not images: return
+    for img in images: safe_close_image(img)
+
+# --- PROMPTS ---
+JSON_SCHEMA_HINT = """
+{
+  "name": "Name des Rezepts",
+  "description": "Kurze Beschreibung des Gerichts",
+  "recipeYield": "4",
+  "prepTime": "15 Minuten",
+  "cookTime": "30 Minuten",
+  "tags": [{"name": "vegan"}],
+  "recipeCategory": [{"name": "Hauptgericht"}],
+  "tools": [{"name": "Bratpfanne"}],
+  "nutrition": {"calories": "450 kcal", "carbohydrateContent": "50 g", "proteinContent": "20 g", "fatContent": "15 g"},
+  "recipeIngredient": [{"referenceId":"ing1","title":"Für die Sauce","quantity":1,"unit":{"name":"EL"},"food":{"name":"Olivenöl"},"note":"","originalText":"1 EL Olivenöl"}],
+  "recipeInstructions": [{"title":"Schritt 1","text":"Öl erhitzen.","ingredientReferences":[{"referenceId":"ing1"}]}]
+}
+"""
+
+def get_prompts_config() -> Dict[str, str]:
+    defaults = {
+        "base_prompt": dedent("""\
+            Du bist ein professionelles Rezept-Analysemodell. Du extrahierst aus einem oder mehreren Bildern, Videos ODER Texten/JSON-Dateien zuverlässig alle Rezeptdetails.
+            Antworte IMMER ausschließlich mit einem strikt validen JSON und NICHTS anderem.
+            Übersetze alle Inhalte ins Deutsche.
+
+            Datenbank-Abgleich:
+            Bekannte Zutaten: [{foods_str}]
+            Bekannte Tags: [{tags_str}]
+            Bekannte Kategorien: [{cats_str}]
+            Bekannte Werkzeuge: [{tools_str}]
+
+            ABSOLUT KRITISCHE REGELN FÜR ZUTATEN:
+            - ZUTATENLISTE HAT PRIORITÄT: Ziehe die Zutaten immer primär aus der expliziten Zutatenliste (in Text/Beschreibung/Kommentaren).
+            - ORIGINALTEXT ZWINGEND ERHALTEN: Das Feld 'originalText' muss IMMER die exakte, vollständige Zeile der Zutat aus der Quelle enthalten (z.B. "250g Kirschtomaten, halbiert"). Nichts weglassen!
+            - BEI MEALIE-UPDATES: Wenn du ein bestehendes Rezept als JSON erhältst, MÜSSEN die Felder 'originalText' und 'food.name' 1:1 übernommen werden!
+            - KEINE VERFÄLSCHUNG: Du darfst NIEMALS konkrete Zutaten (z.B. "Zucchini") durch generische Oberbegriffe (z.B. "Gemüse") ersetzen.
+
+            Weitere Regeln:
+            - note darf nur Eigenschaften enthalten, z.B. gehackt, weich, geschmolzen, warm.
+            - Jede Zutat bekommt eine stabile Kurz-ID wie ing1, ing2.
+            - ingredientReferences dürfen nur auf existierende referenceIds verweisen.
+            - Wenn Mengen fehlen, quantity=null.
+            - recipeYield / Portionen müssen exakt erkannt werden. Setze niemals pauschal 1.
+            - SCHÄTZE NÄHRWERTE: Wenn keine Nährwerte im Text stehen, schätze die Nährwerte (Kalorien, Kohlenhydrate, Eiweiß, Fett) pro Portion realistisch ab.
+            - title-Sektionen nur auf der ersten Zutat einer Sektion setzen.
+            - Zutaten chronologisch nach Verwendung sortieren.
+            - Erzeuge IMMER sinnvolle, kleinschrittige Überschriften (title) für Arbeitsschritte.
+            - Extrahiere alle benötigten Werkzeuge/Utensilien als Array in das Feld 'tools'.
+            - Zeiten als lesbarer Text, niemals ISO8601.
+            - Antwort nur als JSON im folgenden Schema:
+            {json_schema_hint}""").strip(),
+        "pdf_prompt_addition": "\n\nZUSATZ-REGEL FÜR DOKUMENTE:\nDas übergebene Dokument kann MEHRERE Rezepte enthalten. Extrahiere ALLE Rezepte, die du im Dokument findest, und gib sie als Liste im JSON zurück.",
+        "video_prompt_addition": "\n\nSPEZIELLE VIDEO-REGELN:\n1. TEXT ZUERST: Die genauen Zutaten und Mengen stehen oft in den angehängten Text-Metadaten. Wenn du dort eine Zutatenliste findest, hat diese ABSOLUTE PRIORITÄT und muss 1:1 übernommen werden.\n2. VIDEO-FALLBACK: NUR WENN in den Text-Metadaten absolut keine Zutaten zu finden sind, analysiere das Video, um die Zutaten und Mengen aus Bild und Ton zu extrahieren.\n3. ZUBEREITUNG: Die Arbeitsschritte leitest du immer primär aus dem Video ab.",
+        "editor_prompt": dedent("""\
+            Du bist ein KI-Sous-Chef. Du erhältst ein bestehendes Rezept als JSON und eine Nutzeranweisung. Verändere das Rezept präzise nach der Anweisung.
+
+            WICHTIGE REGELN:
+            1. Ändere NIEMALS das Feld 'originalText' oder 'referenceId' von BEREITS BESTEHENDEN Zutaten! Diese müssen exakt gleich bleiben.
+            2. Passe Mengen (quantity), Einheiten (unit), Portionen (recipeYield) und Schritte sinnvoll an.
+            3. Passe auch die Nährwerte ('nutrition') linear zu den Portionen an, falls welche vorhanden sind.
+            4. Wenn du komplett neue Zutaten hinzufügst, erzeuge für diese einen sinnvollen 'originalText'.
+            5. Fasse in 1-2 kurzen, freundlichen Sätzen zusammen, was du gemacht hast (im Feld 'explanation').""").strip()
+    }
+    
+    try:
+        if not os.path.exists(PROMPTS_FILE):
+            os.makedirs(os.path.dirname(PROMPTS_FILE), exist_ok=True)
+            with open(PROMPTS_FILE, "w", encoding="utf-8") as f:
+                json.dump(defaults, f, ensure_ascii=False, indent=4)
+            return defaults
+        
+        with open(PROMPTS_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+            # Fehlende Schlüssel mit Standards auffüllen
+            for k, v in defaults.items():
+                if k not in loaded:
+                    loaded[k] = v
+            return loaded
+    except Exception as e:
+        logger.error("error_loading_prompts", error=str(e))
+        return defaults
+
 # --- DATABASE ---
 @st.cache_resource
 def get_db_lock() -> threading.Lock: return threading.Lock()

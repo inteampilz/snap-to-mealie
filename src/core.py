@@ -4,8 +4,10 @@ from textwrap import dedent
 import logging
 import structlog
 import streamlit as st
+import streamlit.components.v1 as components
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
+from PIL import Image, ImageDraw, ImageFont
 
 # --- CONFIG & LOGGING ---
 class AppSettings(BaseSettings):
@@ -43,6 +45,115 @@ logger = structlog.get_logger("snap-to-mealie")
 
 STATIC_ROOT = os.path.join(os.getcwd(), "static")
 PROMPTS_FILE = os.path.join(STATIC_ROOT, "prompts.json")
+PWA_APP_NAME = "Snap-to-Mealie"
+PWA_SHORT_NAME = "SnapMealie"
+
+def _create_app_icon(size: int, path: str) -> None:
+    img = Image.new("RGBA", (size, size), (103, 80, 164, 255))
+    draw = ImageDraw.Draw(img)
+    inset = max(12, size // 10)
+    draw.rounded_rectangle((inset, inset, size - inset, size - inset), radius=size // 5, fill=(255, 251, 254, 255))
+    try: font = ImageFont.truetype("DejaVuSans-Bold.ttf", size // 2)
+    except Exception: font = ImageFont.load_default()
+    text = "S"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    draw.text(((size - tw) / 2, (size - th) / 2 - size * 0.04), text, font=font, fill=(103, 80, 164, 255))
+    img.save(path, format="PNG")
+    img.close()
+
+def ensure_streamlit_config() -> None:
+    os.makedirs(".streamlit", exist_ok=True)
+    config_path = os.path.join(".streamlit", "config.toml")
+    cfg = dedent(
+        """
+        [server]
+        enableStaticServing = true
+        headless = true
+        """
+    ).strip()
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f: existing = f.read()
+        except Exception: existing = ""
+        if "enableStaticServing" not in existing:
+            with open(config_path, "a", encoding="utf-8") as f: f.write("\n\n" + cfg + "\n")
+    else:
+        with open(config_path, "w", encoding="utf-8") as f: f.write(cfg + "\n")
+
+    if settings.oidc_client_id:
+        cookie_secret = settings.oidc_cookie_secret.strip()
+        if not cookie_secret or cookie_secret == "super-secret":
+            raise RuntimeError("OIDC_COOKIE_SECRET fehlt oder ist unsicher. Setze einen zufälligen String im Environment!")
+
+        secrets_path = os.path.join(".streamlit", "secrets.toml")
+        if not os.path.exists(secrets_path):
+            with open(secrets_path, "w", encoding="utf-8") as f:
+                f.write(
+                    f'[auth]\nredirect_uri = "{settings.oidc_redirect_uri}"\n'
+                    f'cookie_secret = "{cookie_secret}"\n\n'
+                    f'[auth.custom]\nclient_id = "{settings.oidc_client_id}"\n'
+                    f'client_secret = "{settings.oidc_client_secret}"\n'
+                    f'server_metadata_url = "{settings.oidc_discovery_url}"\n'
+                )
+
+def ensure_pwa_assets() -> None:
+    os.makedirs(STATIC_ROOT, exist_ok=True)
+    icons_dir = os.path.join(STATIC_ROOT, "icons")
+    os.makedirs(icons_dir, exist_ok=True)
+    icon_192 = os.path.join(icons_dir, "icon-192.png")
+    icon_512 = os.path.join(icons_dir, "icon-512.png")
+    if not os.path.exists(icon_192): _create_app_icon(192, icon_192)
+    if not os.path.exists(icon_512): _create_app_icon(512, icon_512)
+
+    manifest = {
+        "name": PWA_APP_NAME, "short_name": PWA_SHORT_NAME, "description": "Rezepte aus Bildern, PDFs, URLs und Mealie direkt importieren.",
+        "start_url": "/?pwa=1", "id": "/?pwa=1", "display": "standalone", "scope": "/",
+        "background_color": "#121116", "theme_color": "#6750a4",
+        "icons": [
+            {"src": "/app/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/app/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        ],
+        "share_target": {"action": "/", "method": "GET", "params": {"title": "title", "text": "text", "url": "shared_url"}}
+    }
+    with open(os.path.join(STATIC_ROOT, "manifest.json"), "w", encoding="utf-8") as f: json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    sw = dedent(
+        """
+        self.addEventListener('install', event => { self.skipWaiting(); });
+        self.addEventListener('activate', event => { event.waitUntil(self.clients.claim()); });
+        self.addEventListener('fetch', event => { event.respondWith(fetch(event.request).catch(() => caches.match(event.request))); });
+        """
+    ).strip()
+    with open(os.path.join(STATIC_ROOT, "sw.js"), "w", encoding="utf-8") as f: f.write(sw)
+
+def inject_pwa_bootstrap() -> None:
+    components.html(
+        dedent(
+            """
+            <script>
+            const parentDoc = window.parent.document;
+            if (!parentDoc.querySelector('link[rel="manifest"]')) {
+                const link = parentDoc.createElement('link');
+                link.rel = 'manifest';
+                link.href = '/app/static/manifest.json?v=6';
+                parentDoc.head.appendChild(link);
+            }
+            if (!parentDoc.querySelector('meta[name="theme-color"]')) {
+                const meta = parentDoc.createElement('meta');
+                meta.name = 'theme-color';
+                meta.content = '#6750a4';
+                parentDoc.head.appendChild(meta);
+            }
+            if ('serviceWorker' in window.parent.navigator) {
+                window.parent.navigator.serviceWorker.register('/app/static/sw.js').catch(() => {});
+            }
+            </script>
+            """
+        ),
+        height=0,
+    )
 
 # --- PYDANTIC MODELS ---
 class Tag(BaseModel): name: str

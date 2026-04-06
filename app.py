@@ -486,28 +486,47 @@ with tab6:
     c1.metric("Gesamt via App", stats["total_app_uploads"])
     c2.metric("Deine Uploads", stats["personal_count"])
     c3.metric("Ersparte Zeit", f"{stats['hours_saved']} h")
-    st.divider(); col_lb, col_ing = st.columns(2)
+    
+    st.divider()
+    col_lb, col_ing = st.columns(2)
     with col_lb:
         st.markdown("### 🏆 Leaderboard")
-        for idx, user_stat in enumerate(stats.get("leaderboard", [])): st.write(f"**{'🥇' if idx == 0 else '🥈' if idx == 1 else '🥉' if idx == 2 else f'{idx+1}.'} {user_stat['label']}** — {user_stat['count']} Rezepte")
+        if stats.get("leaderboard"):
+            for idx, user_stat in enumerate(stats["leaderboard"]): 
+                medal = '🥇' if idx == 0 else '🥈' if idx == 1 else '🥉' if idx == 2 else f'{idx+1}.'
+                st.write(f"**{medal} {user_stat['label']}** — {user_stat['count']} Rezepte")
+        else:
+            st.info("Noch keine Einträge.")
+            
     with col_ing:
         st.markdown("### 🍳 Deine Top 5 Zutaten")
-        for i, ing in enumerate(stats.get("top_ingredients", [])): st.write(f"{i+1}. **{ing['name'].title()}** — in {ing['share']:.0f}%")
+        if stats.get("top_ingredients"):
+            for i, ing in enumerate(stats["top_ingredients"]): 
+                st.write(f"{i+1}. **{ing['name'].title()}** — in {ing['share']:.0f}%")
+        else:
+            st.info("Noch keine Zutaten analysiert.")
+            
     st.divider()
+    st.markdown("### 📖 Meine Historie")
     if stats.get("upload_rows"):
-        with st.expander("Meine Historie", expanded=False):
-            for row in stats["upload_rows"][:50]: st.markdown(f"• [{row['recipe_name']}]({settings.mealie_url}/recipe/{row['recipe_slug']}) — zuletzt {time.strftime('%Y-%m-%d %H:%M', time.localtime(row['last_uploaded_at']))}")
+        with st.expander("Letzte 50 Uploads ansehen", expanded=False):
+            for row in stats["upload_rows"][:50]: 
+                st.markdown(f"• [{row['recipe_name']}]({settings.mealie_url}/recipe/{row['recipe_slug']}) — zuletzt {time.strftime('%Y-%m-%d %H:%M', time.localtime(row['last_uploaded_at']))}")
+    else:
+        st.info("Du hast noch keine Rezepte hochgeladen.")
 
     if is_admin_user():
         st.divider()
-        st.markdown("### 🛡️ Globale Historie")
+        st.markdown("### 🛡️ Globale Historie (Admin)")
         global_rows = get_all_uploaded_recipe_rows(100)
         if global_rows:
-            with st.expander("Alle Nutzer Uploads ansehen", expanded=False):
+            with st.expander("Letzte 100 globale Uploads ansehen", expanded=False):
                 for row in global_rows:
                     uploaded = time.strftime("%Y-%m-%d %H:%M", time.localtime(row["last_uploaded_at"]))
                     label = row["user_label"] if row["user_label"] != "Anonym" else (row["user_email"] or "Anonym")
                     st.markdown(f"• **{label}**: [{row['recipe_name']}]({settings.mealie_url}/recipe/{row['recipe_slug']}) — {uploaded}")
+        else:
+            st.info("Noch keine globalen Uploads im System.")
         
         st.divider()
         st.markdown("### 🧪 System-Tests")
@@ -520,7 +539,6 @@ with tab6:
                     else: st.error("❌ Einige Tests sind fehlgeschlagen.")
                     with st.expander("Test-Log", expanded=True): st.code(res.stdout + "\n" + res.stderr, language="text")
                 except Exception as e: st.error(f"❌ Fehler: {e}")
-
 
 render_editor_queue()
 

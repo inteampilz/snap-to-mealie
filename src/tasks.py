@@ -5,6 +5,40 @@ from PIL import Image
 from src.core import settings, logger, get_task_registry, get_task_lock, format_duration, get_current_user_label, get_current_user_key, get_current_user_email, add_to_editor_queue
 from src.services import get_mealie_user_id_by_email, create_genai_client, load_image, image_to_jpeg_bytes, analyze_content_with_gemini, auto_generate_cover_image, direct_save_to_mealie, safe_close_image, download_recipe_video, analyze_video_with_gemini, cleanup_video_bundle, analyze_pdf_with_gemini, fetch_url_text_and_image, fetch_mealie_recipe_text
 
+def _is_empty_value(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+def preserve_existing_mealie_ingredients(parsed_data: Dict[str, Any], existing_recipe: Dict[str, Any]) -> Dict[str, Any]:
+    existing_ings = existing_recipe.get("recipeIngredient") or []
+    parsed_ings = parsed_data.get("recipeIngredient") or []
+    if not existing_ings:
+        return parsed_data
+
+    if not parsed_ings:
+        parsed_data["recipeIngredient"] = existing_ings
+        return parsed_data
+
+    existing_by_ref = {str(i.get("referenceId") or "").strip(): i for i in existing_ings if str(i.get("referenceId") or "").strip()}
+    seen_refs, merged_ings = set(), []
+    for ing in parsed_ings:
+        cur = dict(ing or {})
+        ref = str(cur.get("referenceId") or "").strip()
+        if ref:
+            seen_refs.add(ref)
+        if ex := existing_by_ref.get(ref):
+            for field in ("originalText", "quantity", "unit", "food", "note", "title"):
+                if _is_empty_value(cur.get(field)) and not _is_empty_value(ex.get(field)):
+                    cur[field] = ex.get(field)
+        merged_ings.append(cur)
+
+    for ex in existing_ings:
+        ref = str(ex.get("referenceId") or "").strip()
+        if ref and ref not in seen_refs:
+            merged_ings.append(ex)
+
+    parsed_data["recipeIngredient"] = merged_ings
+    return parsed_data
+
 def task_update(task_id: str, **changes) -> None:
     with get_task_lock():
         if t := get_task_registry().get(task_id): t.update(changes)
@@ -209,6 +243,8 @@ def _process_single_mealie_batch_item(task_id: str, idx: int, slug: str, total: 
         task_set_detail(task_id, f"Rezept {idx+1}/{total}: Cover")
         from src.services import get_recipe_by_slug
         er = get_recipe_by_slug(mealie_url, mealie_api_key, slug)
+        if er:
+            pd = preserve_existing_mealie_ingredients(pd, er)
         cib = auto_generate_cover_image(cb, pd, None, td.get("owner", "")) if er and not er.get("image") else None
         
         if target_mode == "editor":

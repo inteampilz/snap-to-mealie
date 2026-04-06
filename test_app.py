@@ -213,6 +213,30 @@ def test_task_registry_and_metrics(mock_mealie_id):
     assert metrics["rpm"] > 0
     assert metrics["eta_seconds"] > 0
 
+def test_preserve_existing_mealie_ingredients_keeps_missing_fields_and_refs():
+    parsed = {
+        "recipeIngredient": [
+            {"referenceId": "ing1", "originalText": "", "quantity": None, "food": None, "unit": None},
+        ]
+    }
+    existing = {
+        "recipeIngredient": [
+            {"referenceId": "ing1", "originalText": "200 g Mehl", "quantity": 200, "unit": {"name": "g"}, "food": {"name": "Mehl"}},
+            {"referenceId": "ing2", "originalText": "2 Eier", "quantity": 2, "unit": {"name": "Stk"}, "food": {"name": "Ei"}},
+        ]
+    }
+
+    out = tasks.preserve_existing_mealie_ingredients(parsed, existing)
+    out_ings = out["recipeIngredient"]
+
+    assert len(out_ings) == 2
+    ing1 = next(i for i in out_ings if i["referenceId"] == "ing1")
+    ing2 = next(i for i in out_ings if i["referenceId"] == "ing2")
+    assert ing1["originalText"] == "200 g Mehl"
+    assert ing1["quantity"] == 200
+    assert ing1["food"]["name"] == "Mehl"
+    assert ing2["originalText"] == "2 Eier"
+
 def test_generate_extension_zip():
     zip_bytes = core.generate_extension_zip()
     assert isinstance(zip_bytes, bytes)

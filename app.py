@@ -161,6 +161,58 @@ def remove_image(idx: int) -> None:
 
 def set_active_tab(idx: int): st.session_state.switch_to_tab = idx
 
+def save_all_editor_queue_to_mealie() -> None:
+    queue_items = get_editor_queue(get_current_user_key())
+    if not queue_items:
+        toast("Keine Rezepte in der Warteschlange.", "ℹ️")
+        return
+
+    u_email, u_label = get_current_user_email(), get_current_user_label()
+    m_uid = get_mealie_user_id_by_email(settings.mealie_url, settings.mealie_api_key, u_email)
+    saved_slugs, errors = [], []
+
+    with st.spinner(f"Speichere {len(queue_items)} Rezept(e) nach Mealie..."):
+        for item in queue_items:
+            ok, res = direct_save_to_mealie(
+                item["recipe_data"],
+                settings.mealie_url,
+                settings.mealie_api_key,
+                item.get("cover_image"),
+                audit_user_key=get_current_user_key(),
+                audit_user_label=u_label,
+                audit_user_email=u_email,
+                mealie_user_id=m_uid,
+            )
+            if ok:
+                saved_slugs.append(res)
+                delete_from_editor_queue(item["id"])
+            else:
+                errors.append(f"{item.get('recipe_name', 'Unbekannt')}: {res}")
+
+    if saved_slugs:
+        st.session_state.upload_success = list(saved_slugs)
+        toast(f"{len(saved_slugs)} Rezept(e) gespeichert.", "✅")
+    if errors:
+        for err in errors[:8]:
+            st.error(f"❌ {err}")
+        if len(errors) > 8:
+            st.warning(f"... und {len(errors) - 8} weitere Fehler.")
+
+def render_editor_queue_body() -> None:
+    if (eq := get_editor_queue(get_current_user_key())) and not st.session_state.get("recipe_data"):
+        st.divider()
+        ui_card("📝 Editor-Warteschlange", f"{len(eq)} Rezept(e) bereit.")
+        if st.button("💾 Alle direkt nach Mealie speichern", use_container_width=True, type="primary", key="save_all_editor_queue"):
+            save_all_editor_queue_to_mealie()
+            st.rerun()
+        for q in eq:
+            with st.container(border=True):
+                cq1, cq2, cq3 = st.columns([0.7, 0.15, 0.15])
+                cq1.write(f"**{q['recipe_name']}** ({time.strftime('%d.%m. %H:%M', time.localtime(q['created_at']))})")
+                if cq2.button("✏️ Laden", key=f"lq_{q['id']}", use_container_width=True):
+                    reset_editor_state(); st.session_state.update({"recipe_data": q['recipe_data'], "cover_image_bytes": q['cover_image'], "current_queue_id": q['id'], "target_slug": None}); st.rerun()
+                if cq3.button("🗑️", key=f"dq_{q['id']}", use_container_width=True): delete_from_editor_queue(q['id']); st.rerun()
+
 
 def _render_task_monitor_body() -> None:
     max_visible_logs = 8
@@ -234,28 +286,10 @@ if hasattr(st, "fragment"):
     @st.fragment(run_every="3s")
     def render_task_monitor() -> None: _render_task_monitor_body()
     @st.fragment(run_every="3s")
-    def render_editor_queue():
-        if (eq := get_editor_queue(get_current_user_key())) and not st.session_state.get("recipe_data"):
-            st.divider()
-            ui_card("📝 Editor-Warteschlange", f"{len(eq)} Rezept(e) bereit.")
-            for q in eq:
-                with st.container(border=True):
-                    cq1, cq2, cq3 = st.columns([0.7, 0.15, 0.15])
-                    cq1.write(f"**{q['recipe_name']}** ({time.strftime('%d.%m. %H:%M', time.localtime(q['created_at']))})")
-                    if cq2.button("✏️ Laden", key=f"lq_{q['id']}", use_container_width=True):
-                        reset_editor_state(); st.session_state.update({"recipe_data": q['recipe_data'], "cover_image_bytes": q['cover_image'], "current_queue_id": q['id'], "target_slug": None}); st.rerun()
-                    if cq3.button("🗑️", key=f"dq_{q['id']}", use_container_width=True): delete_from_editor_queue(q['id']); st.rerun()
+    def render_editor_queue(): render_editor_queue_body()
 else:
     def render_task_monitor() -> None: _render_task_monitor_body()
-    def render_editor_queue():
-        if (eq := get_editor_queue(get_current_user_key())) and not st.session_state.get("recipe_data"):
-            st.divider(); ui_card("📝 Editor-Warteschlange", f"{len(eq)} Rezept(e) bereit.")
-            for q in eq:
-                with st.container(border=True):
-                    cq1, cq2, cq3 = st.columns([0.7, 0.15, 0.15])
-                    cq1.write(f"**{q['recipe_name']}** ({time.strftime('%d.%m. %H:%M', time.localtime(q['created_at']))})")
-                    if cq2.button("✏️ Laden", key=f"lq_{q['id']}", use_container_width=True): reset_editor_state(); st.session_state.update({"recipe_data": q['recipe_data'], "cover_image_bytes": q['cover_image'], "current_queue_id": q['id'], "target_slug": None}); st.rerun()
-                    if cq3.button("🗑️", key=f"dq_{q['id']}", use_container_width=True): delete_from_editor_queue(q['id']); st.rerun()
+    def render_editor_queue(): render_editor_queue_body()
 
 # -----------------------------------------------------------------------------
 # APP INIT

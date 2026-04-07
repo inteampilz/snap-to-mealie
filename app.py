@@ -22,6 +22,7 @@ from src.core import (
     get_current_user_email, get_current_user_label, get_current_user_key, is_admin_user,
     register_active_user, get_active_users_snapshot, generate_extension_zip,
     get_image_prompts, save_image_prompt, set_default_image_prompt, delete_image_prompt,
+    delete_all_from_editor_queue,
     get_editor_queue, delete_from_editor_queue, clean_str, extract_servings_number, format_duration,
     get_all_uploaded_recipe_rows, get_nested_name
 )
@@ -202,9 +203,16 @@ def render_editor_queue_body() -> None:
     if (eq := get_editor_queue(get_current_user_key())) and not st.session_state.get("recipe_data"):
         st.divider()
         ui_card("📝 Editor-Warteschlange", f"{len(eq)} Rezept(e) bereit.")
-        if st.button("💾 Alle direkt nach Mealie speichern", use_container_width=True, type="primary", key="save_all_editor_queue"):
-            save_all_editor_queue_to_mealie()
-            st.rerun()
+        q_actions_1, q_actions_2 = st.columns(2)
+        with q_actions_1:
+            if st.button("💾 Alle direkt nach Mealie speichern", use_container_width=True, type="primary", key="save_all_editor_queue"):
+                save_all_editor_queue_to_mealie()
+                st.rerun()
+        with q_actions_2:
+            if st.button("🗑️ Alle Rezepte löschen", use_container_width=True, key="delete_all_editor_queue"):
+                delete_all_from_editor_queue(get_current_user_key())
+                toast("Editor-Warteschlange geleert.", "🧹")
+                st.rerun()
         for q in eq:
             with st.container(border=True):
                 cq1, cq2, cq3 = st.columns([0.7, 0.15, 0.15])

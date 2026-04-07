@@ -94,6 +94,32 @@ def test_pydantic_parsing():
     assert recipe.recipeIngredient[0].referenceId == "i1"
     assert recipe.recipeInstructions[0].title == "1"
 
+def test_pydantic_parsing_with_prefixed_text_and_many_ingredients():
+    ingredients = [
+        {"referenceId": f"ing{i}", "originalText": f"{i} g Zutat {i}"}
+        for i in range(1, 13)
+    ]
+    payload = {
+        "name": "Großer Eintopf",
+        "description": "Viele Zutaten",
+        "recipeYield": "6",
+        "prepTime": "20m",
+        "cookTime": "40m",
+        "recipeIngredient": ingredients,
+        "recipeInstructions": [
+            {
+                "title": "Schritt 1",
+                "text": "Alles mischen",
+                "ingredientReferences": [{"referenceId": "ing10"}, {"referenceId": "ing11"}],
+            }
+        ],
+    }
+    raw = f"Hier ist das Rezept als JSON:\n```json\n{json.dumps(payload, ensure_ascii=False)}\n```"
+    recipe = core._parse_pydantic_json(core.Recipe, raw)
+    assert len(recipe.recipeIngredient) == 12
+    assert recipe.recipeIngredient[9].referenceId == "ing10"
+    assert recipe.recipeInstructions[0].ingredientReferences[0].referenceId == "ing10"
+
 
 # -----------------------------------------------------------------------------
 # 3. UNIT TESTS: Web Scraping & HTML
@@ -174,6 +200,14 @@ def test_editor_queue_operations():
     
     core.delete_from_editor_queue(items[-1]["id"])
     assert len(core.get_editor_queue(user_key)) == len(items) - 1
+
+def test_delete_all_editor_queue_operations():
+    user_key = "test_user_delete_all"
+    core.add_to_editor_queue(user_key, {"name": "Queue Rezept 1"})
+    core.add_to_editor_queue(user_key, {"name": "Queue Rezept 2"})
+    assert len(core.get_editor_queue(user_key)) == 2
+    core.delete_all_from_editor_queue(user_key)
+    assert len(core.get_editor_queue(user_key)) == 0
 
 def test_image_prompts_db():
     core.save_image_prompt("Test Style", "Test Prompt", user_label="test_user", is_default=True)

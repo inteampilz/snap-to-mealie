@@ -41,6 +41,8 @@ from src.tasks import (
     background_pdf_batch_process, background_mealie_batch_process
 )
 
+MAX_BATCH_RECIPES = 40
+
 
 # -----------------------------------------------------------------------------
 # Streamlit setup / theme
@@ -164,6 +166,11 @@ def _render_task_monitor_body() -> None:
     if st.button("🗑️ Historie leeren", use_container_width=True):
         with get_task_lock():
             for tid in [tid for tid, t in get_task_registry().items() if t["status"] in ["abgeschlossen", "abgebrochen"]]: del get_task_registry()[tid]
+        st.rerun()
+    if st.button("🧹 Hängende Tasks löschen", use_container_width=True):
+        with get_task_lock():
+            for tid in [tid for tid, t in get_task_registry().items() if t.get("status") == "running"]: del get_task_registry()[tid]
+        toast("Laufende Tasks wurden aus der Sidebar entfernt.", "🧹")
         st.rerun()
 
     for t_id, task in list(get_task_registry().items()):
@@ -339,12 +346,16 @@ if st.session_state.collected_pdfs:
     st.divider(); ui_card("Aktuelle PDF-Sammlung", f"Es liegen {len(st.session_state.collected_pdfs)} PDF-Dokument(e) bereit.")
     c1, c2, c3 = st.columns(3)
     if c1.button("🪄 An Editor senden (PDF)", use_container_width=True, type="primary"):
-        st.session_state.switch_to_tab = 0; task_id, _ = make_task("Hintergrund: PDF -> Editor", len(st.session_state.collected_pdfs))
-        import threading; threading.Thread(target=background_pdf_batch_process, args=(task_id, list(st.session_state.collected_pdfs), settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_pdf_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
+        selected_pdfs = list(st.session_state.collected_pdfs)[:MAX_BATCH_RECIPES]
+        if len(st.session_state.collected_pdfs) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} Dateien verarbeitet.")
+        st.session_state.switch_to_tab = 0; task_id, _ = make_task("Hintergrund: PDF -> Editor", len(selected_pdfs))
+        import threading; threading.Thread(target=background_pdf_batch_process, args=(task_id, selected_pdfs, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_pdf_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
         st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.session_state.collected_pdfs = []; st.rerun()
     if c2.button("📚 Direkt-Import (PDF)", use_container_width=True):
-        st.session_state.switch_to_tab = 0; task_id, _ = make_task("Hintergrund: PDF -> Mealie", len(st.session_state.collected_pdfs))
-        import threading; threading.Thread(target=background_pdf_batch_process, args=(task_id, list(st.session_state.collected_pdfs), settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_pdf_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "direct"), daemon=False).start()
+        selected_pdfs = list(st.session_state.collected_pdfs)[:MAX_BATCH_RECIPES]
+        if len(st.session_state.collected_pdfs) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} Dateien verarbeitet.")
+        st.session_state.switch_to_tab = 0; task_id, _ = make_task("Hintergrund: PDF -> Mealie", len(selected_pdfs))
+        import threading; threading.Thread(target=background_pdf_batch_process, args=(task_id, selected_pdfs, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_pdf_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "direct"), daemon=False).start()
         st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.session_state.collected_pdfs = []; st.rerun()
     if c3.button("🗑️ PDFs verwerfen", use_container_width=True): st.session_state.switch_to_tab = 0; st.session_state.collected_pdfs = []; st.rerun()
 
@@ -389,12 +400,24 @@ if st.session_state.collected_images:
     st.markdown("### Jedes Bild / Paar als eigenes Rezept")
     c1, c2, c3 = st.columns(3)
     if c1.button("📚 Editor-Stapel", use_container_width=True):
-        st.session_state.switch_to_tab = 0; total = math.ceil(len(st.session_state.collected_images) / 2) if pair_mode else len(st.session_state.collected_images); task_id, _ = make_task("Hintergrund-Stapel: Bilder -> Editor", total)
-        import threading; threading.Thread(target=background_image_batch_process, args=(task_id, list(st.session_state.collected_images), settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), pair_mode, True, "editor"), daemon=False).start()
+        selected_images = list(st.session_state.collected_images)[:MAX_BATCH_RECIPES * (2 if pair_mode else 1)]
+        total = math.ceil(len(selected_images) / 2) if pair_mode else len(selected_images)
+        if total > MAX_BATCH_RECIPES:
+            selected_images = selected_images[:MAX_BATCH_RECIPES * 2]
+            total = MAX_BATCH_RECIPES
+        if (math.ceil(len(st.session_state.collected_images) / 2) if pair_mode else len(st.session_state.collected_images)) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} verarbeitet.")
+        st.session_state.switch_to_tab = 0; task_id, _ = make_task("Hintergrund-Stapel: Bilder -> Editor", total)
+        import threading; threading.Thread(target=background_image_batch_process, args=(task_id, selected_images, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), pair_mode, True, "editor"), daemon=False).start()
         st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; clear_images_from_state(); st.rerun()
     if c2.button("📚 Direkt-Stapel", use_container_width=True):
-        st.session_state.switch_to_tab = 0; total = math.ceil(len(st.session_state.collected_images) / 2) if pair_mode else len(st.session_state.collected_images); task_id, _ = make_task("Hintergrund-Stapel: Bilder -> Mealie", total)
-        import threading; threading.Thread(target=background_image_batch_process, args=(task_id, list(st.session_state.collected_images), settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), pair_mode, True, "direct"), daemon=False).start()
+        selected_images = list(st.session_state.collected_images)[:MAX_BATCH_RECIPES * (2 if pair_mode else 1)]
+        total = math.ceil(len(selected_images) / 2) if pair_mode else len(selected_images)
+        if total > MAX_BATCH_RECIPES:
+            selected_images = selected_images[:MAX_BATCH_RECIPES * 2]
+            total = MAX_BATCH_RECIPES
+        if (math.ceil(len(st.session_state.collected_images) / 2) if pair_mode else len(st.session_state.collected_images)) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} verarbeitet.")
+        st.session_state.switch_to_tab = 0; task_id, _ = make_task("Hintergrund-Stapel: Bilder -> Mealie", total)
+        import threading; threading.Thread(target=background_image_batch_process, args=(task_id, selected_images, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), pair_mode, True, "direct"), daemon=False).start()
         st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; clear_images_from_state(); st.rerun()
     if c3.button("🗑️ Verwerfen", use_container_width=True): st.session_state.switch_to_tab = 0; clear_images_from_state(); reset_editor_state(); st.rerun()
 
@@ -418,12 +441,16 @@ with tab3:
             import threading; threading.Thread(target=background_url_batch_process, args=(task_id, [urls[0]], settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
             st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.rerun()
         if c2.button("📚 Editor-Stapel", use_container_width=True):
-            st.session_state.switch_to_tab = 2; task_id, _ = make_task("Hintergrund-Stapel: URLs -> Editor", len(urls))
-            import threading; threading.Thread(target=background_url_batch_process, args=(task_id, urls, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
+            selected_urls = urls[:MAX_BATCH_RECIPES]
+            if len(urls) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} URLs verarbeitet.")
+            st.session_state.switch_to_tab = 2; task_id, _ = make_task("Hintergrund-Stapel: URLs -> Editor", len(selected_urls))
+            import threading; threading.Thread(target=background_url_batch_process, args=(task_id, selected_urls, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
             st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.rerun()
         if c3.button("📚 Direkt-Stapel", use_container_width=True):
-            st.session_state.switch_to_tab = 2; task_id, _ = make_task("Hintergrund-Stapel: URLs -> Mealie", len(urls))
-            import threading; threading.Thread(target=background_url_batch_process, args=(task_id, urls, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "direct"), daemon=False).start()
+            selected_urls = urls[:MAX_BATCH_RECIPES]
+            if len(urls) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} URLs verarbeitet.")
+            st.session_state.switch_to_tab = 2; task_id, _ = make_task("Hintergrund-Stapel: URLs -> Mealie", len(selected_urls))
+            import threading; threading.Thread(target=background_url_batch_process, args=(task_id, selected_urls, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "direct"), daemon=False).start()
             st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.rerun()
 
 with tab4:
@@ -445,12 +472,16 @@ with tab4:
             import threading; threading.Thread(target=background_video_batch_process, args=(task_id, [video_urls[0]], settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
             st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.rerun()
         if c2.button("📚 Editor-Stapel (Video)", disabled=not VIDEO_IMPORT_AVAILABLE, use_container_width=True):
-            st.session_state.switch_to_tab = 3; task_id, _ = make_task("Hintergrund-Stapel: Videos -> Editor", len(video_urls))
-            import threading; threading.Thread(target=background_video_batch_process, args=(task_id, video_urls, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
+            selected_video_urls = video_urls[:MAX_BATCH_RECIPES]
+            if len(video_urls) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} Video-Links verarbeitet.")
+            st.session_state.switch_to_tab = 3; task_id, _ = make_task("Hintergrund-Stapel: Videos -> Editor", len(selected_video_urls))
+            import threading; threading.Thread(target=background_video_batch_process, args=(task_id, selected_video_urls, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
             st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.rerun()
         if c3.button("📚 Direkt-Stapel (Video)", disabled=not VIDEO_IMPORT_AVAILABLE, use_container_width=True):
-            st.session_state.switch_to_tab = 3; task_id, _ = make_task("Hintergrund-Stapel: Videos -> Mealie", len(video_urls))
-            import threading; threading.Thread(target=background_video_batch_process, args=(task_id, video_urls, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "direct"), daemon=False).start()
+            selected_video_urls = video_urls[:MAX_BATCH_RECIPES]
+            if len(video_urls) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} Video-Links verarbeitet.")
+            st.session_state.switch_to_tab = 3; task_id, _ = make_task("Hintergrund-Stapel: Videos -> Mealie", len(selected_video_urls))
+            import threading; threading.Thread(target=background_video_batch_process, args=(task_id, selected_video_urls, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "direct"), daemon=False).start()
             st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.rerun()
 
 with tab5:
@@ -478,8 +509,10 @@ with tab5:
             import threading; threading.Thread(target=background_mealie_batch_process, args=(task_id, [all_slugs[0]], settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
             st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.rerun()
         if c3.button("📚 Editor-Stapel (Mealie)", use_container_width=True):
-            st.session_state.switch_to_tab = 4; task_id, _ = make_task("Hintergrund-Stapel: Mealie -> Editor", len(all_slugs))
-            import threading; threading.Thread(target=background_mealie_batch_process, args=(task_id, all_slugs, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
+            selected_slugs = all_slugs[:MAX_BATCH_RECIPES]
+            if len(all_slugs) > MAX_BATCH_RECIPES: st.warning(f"Maximal {MAX_BATCH_RECIPES} Rezepte pro Stapel. Es werden nur die ersten {MAX_BATCH_RECIPES} Mealie-Rezepte verarbeitet.")
+            st.session_state.switch_to_tab = 4; task_id, _ = make_task("Hintergrund-Stapel: Mealie -> Editor", len(selected_slugs))
+            import threading; threading.Thread(target=background_mealie_batch_process, args=(task_id, selected_slugs, settings.mealie_url, settings.mealie_api_key, settings.gemini_api_key, get_prompt(), get_mealie_data_maps(settings.mealie_url, settings.mealie_api_key), "editor"), daemon=False).start()
             st.session_state.upload_success = ["BACKGROUND_TASK_STARTED"]; st.rerun()
 
 with tab6:

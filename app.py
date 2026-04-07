@@ -161,6 +161,9 @@ def set_active_tab(idx: int): st.session_state.switch_to_tab = idx
 
 
 def _render_task_monitor_body() -> None:
+    max_visible_logs = 8
+    max_visible_errors = 5
+
     if st.button("🗑️ Historie leeren", use_container_width=True):
         with get_task_lock():
             for tid in [tid for tid, t in get_task_registry().items() if t["status"] in ["abgeschlossen", "abgebrochen"]]: del get_task_registry()[tid]
@@ -182,8 +185,18 @@ def _render_task_monitor_body() -> None:
                     with get_task_lock():
                         if t_id in get_task_registry(): del get_task_registry()[t_id]
                     st.rerun()
-            for err in task.get("errors", []): st.error(err)
-            for log in task.get("logs", []): st.success(log)
+            errors = task.get("errors", [])
+            logs = task.get("logs", [])
+            hidden_errors = max(0, len(errors) - max_visible_errors)
+            hidden_logs = max(0, len(logs) - max_visible_logs)
+            if hidden_errors:
+                st.caption(f"… {hidden_errors} ältere Fehler ausgeblendet (Performance).")
+            for err in errors[-max_visible_errors:]:
+                st.error(err)
+            if hidden_logs:
+                st.caption(f"… {hidden_logs} ältere Erfolgsmeldungen ausgeblendet (Performance).")
+            for log in logs[-max_visible_logs:]:
+                st.success(log)
             if task["status"] in ["abgeschlossen", "abgebrochen"] and st.button("Eintrag ausblenden", key=f"del_{t_id}", use_container_width=True):
                 with get_task_lock():
                     if t_id in get_task_registry(): del get_task_registry()[t_id]

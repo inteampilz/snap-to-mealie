@@ -4,7 +4,6 @@ from textwrap import dedent
 import logging
 import structlog
 import streamlit as st
-import streamlit.components.v1 as components
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
 from PIL import Image, ImageDraw, ImageFont
@@ -129,7 +128,7 @@ def ensure_pwa_assets() -> None:
     with open(os.path.join(STATIC_ROOT, "sw.js"), "w", encoding="utf-8") as f: f.write(sw)
 
 def inject_pwa_bootstrap() -> None:
-    components.html(
+    st.html(
         dedent(
             """
             <script>
@@ -151,8 +150,7 @@ def inject_pwa_bootstrap() -> None:
             }
             </script>
             """
-        ),
-        height=0,
+        )
     )
 
 # --- TASKS & STATE MANAGEMENT ---
@@ -213,31 +211,7 @@ def _parse_pydantic_json(model_class: Type[T], text: str) -> T:
     if clean_text.startswith(bt + "json"): clean_text = clean_text[7:]
     elif clean_text.startswith(bt): clean_text = clean_text[3:]
     if clean_text.endswith(bt): clean_text = clean_text[:-3]
-    clean_text = clean_text.strip()
-
-    try:
-        return model_class.model_validate_json(clean_text)
-    except Exception:
-        pass
-
-    fence_match = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
-    if fence_match:
-        candidate = fence_match.group(1).strip()
-        try:
-            return model_class.model_validate_json(candidate)
-        except Exception:
-            pass
-
-    decoder = json.JSONDecoder()
-    for start_idx, ch in enumerate(clean_text):
-        if ch not in "{[":
-            continue
-        try:
-            obj, _ = decoder.raw_decode(clean_text[start_idx:])
-            return model_class.model_validate(obj)
-        except Exception:
-            continue
-    raise ValueError("No valid JSON payload found in model response.")
+    return model_class.model_validate_json(clean_text.strip())
 
 # --- UTILS ---
 def clean_str(val: Any) -> str:
@@ -363,9 +337,6 @@ def get_prompts_config() -> Dict[str, str]:
 
 
 # --- DATABASE ---
-@st.cache_resource
-def get_db_lock() -> threading.Lock: return threading.Lock()
-
 _db_local = threading.local()
 
 import contextlib
@@ -430,11 +401,6 @@ def get_editor_queue(user_key: str) -> List[Dict[str, Any]]:
 def delete_from_editor_queue(item_id: int) -> None:
     with get_db_lock(), db_conn() as conn:
         conn.execute("DELETE FROM editor_queue WHERE id = ?", (item_id,))
-        conn.commit()
-
-def delete_all_from_editor_queue(user_key: str) -> None:
-    with get_db_lock(), db_conn() as conn:
-        conn.execute("DELETE FROM editor_queue WHERE user_key = ?", (user_key,))
         conn.commit()
 
 def db_find_recipe_slug(recipe_name: str) -> Optional[str]:

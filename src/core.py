@@ -4,6 +4,7 @@ from textwrap import dedent
 import logging
 import structlog
 import streamlit as st
+import streamlit.components.v1 as components
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
 from PIL import Image, ImageDraw, ImageFont
@@ -128,7 +129,7 @@ def ensure_pwa_assets() -> None:
     with open(os.path.join(STATIC_ROOT, "sw.js"), "w", encoding="utf-8") as f: f.write(sw)
 
 def inject_pwa_bootstrap() -> None:
-    st.html(
+    components.html(
         dedent(
             """
             <script>
@@ -150,7 +151,8 @@ def inject_pwa_bootstrap() -> None:
             }
             </script>
             """
-        )
+        ),
+        height=0,
     )
 
 # --- TASKS & STATE MANAGEMENT ---
@@ -337,6 +339,9 @@ def get_prompts_config() -> Dict[str, str]:
 
 
 # --- DATABASE ---
+@st.cache_resource
+def get_db_lock() -> threading.Lock: return threading.Lock()
+
 _db_local = threading.local()
 
 import contextlib
